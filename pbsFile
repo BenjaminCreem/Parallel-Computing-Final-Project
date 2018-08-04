@@ -1,0 +1,9 @@
+#PBS -l nodes=8:ppn=12
+#PBS -l walltime=00:00:10
+#PBS -q batch
+#PBS -N creemMatMult
+#PBS -j oe
+
+#cat $PBS_NODEFILE
+cd ~/finalProject
+mpiexec -np 8 --map-by ppr:2:node --hostfile $PBS_NODEFILE ./mergesort
