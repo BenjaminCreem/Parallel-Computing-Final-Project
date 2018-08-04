@@ -1,156 +1,128 @@
-#include <stdio.h>
+﻿#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <omp.h>
 #include "mpi.h"
 
 #define BensType int
-#define mpiBenType MPI_INT
+#define MPI_BEN_TYPE MPI_INT
 
-void merge(int *array, int low, int mid, int high, int n);
-void sort(int *array, int low, int high, int n);
+void TopDownMergeSort(BensType *a, BensType *b, int n);
+void TopDownSplitMerge(BensType *B, int iBegin, int iEnd, BensType *A);
+void TopDownMerge(BensType *A, int iBegin, int iMiddle, int iEnd, BensType *B);
+void CopyArray(BensType *A, int iBegin, int iEnd, BensType *B);
 void printArray(BensType *array, int n);
 
-int main(int argc, char **argv){
-
+int main(int argc, char **argv)
+{
     int n = 16;
     srand(time(0));
     BensType *array = (BensType *)malloc(n*sizeof(BensType));
+    //BensType *work = (BensType *)malloc(n*sizeof(BensType));
     int rank, numranks, len;
     char hostname[MPI_MAX_PROCESSOR_NAME];
-
 
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &numranks);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Get_processor_name(hostname, &len);
 
-    if(rank == 0 && n % numranks != 0)
-    {
-        printf("N: %d, Numranks: %d\n, not possible", n, numranks);
-        exit(1);
-    }
-
     if(rank == 0)
     {
-         printf("Array to be sorted:\n");
-         for(int i = 0; i < n; i++)
-         {
+        printf("Array to be sorted:\n");
+        for(int i = 0; i < n; i++)
+        {
             array[i] = rand() % (n + 1 - 0) + 0;
-         }
-         printArray(array, n);
+        }
+        printArray(array, n);
     }
 
-    int secSize = n/numranks;
+    int secSize = n / numranks;
+    //printf("secSize: %d\n", secSize);
     BensType *scatterMat = (BensType *)malloc(secSize*sizeof(BensType));
-    MPI_Scatter(array, secSize, mpiBenType, scatterMat, secSize, mpiBenType, 0, MPI_COMM_WORLD);
+    BensType *work = (BensType *)malloc(secSize*sizeof(BensType));
+    MPI_Scatter(array, secSize, MPI_BEN_TYPE, scatterMat, secSize, MPI_BEN_TYPE, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
+    TopDownMergeSort(scatterMat, work, secSize);
+    MPI_Gather(scatterMat, secSize, MPI_BEN_TYPE, array, secSize, MPI_BEN_TYPE, 0, MPI_COMM_WORLD);
 
-    //start the recursive calls
-    sort(scatterMat, 0 , secSize-1, secSize);
-    
-    MPI_Gather(scatterMat, secSize, mpiBenType, array, secSize, mpiBenType, 0, MPI_COMM_WORLD);
-    //There are now numranks sorted arrays within array
-    //These arrays need to be merged
-   
-    //Merge smaller arrays inside array
-    int c = numranks/2;
-    for(int i = 0; i < c-1; i++)
+    //I now have numranks sorted arrays inside of array that need to be sorted.
+    if(rank == 0)
     {
-        printf("Woo!");
-        MPI_Barrier(MPI_COMM_WORLD);
-        int numreceive;
-        BensType *myarr;
-        if(rank == 0)
+        int nummerges = secSize-1;
+        for(int i = 0; i < nummerges; i++)
         {
-            //printf("Woo! %d", i);
-            if(i == c-1) //Final merge
+            int l = 0;
+            for(int j = 0; j < (n/secSize)/2; j++)
             {
-                printf("DOING FINAL MERGE");
-                merge(array, 0, (n-1/2), n-1, n);
+                int m = l + secSize;
+                int h = m + secSize;
+                work = (BensType *)malloc(n*sizeof(BensType)); 
+                CopyArray(array, l, h, work);
+                TopDownMerge(work, l, m, h, array);
+                printArray(array, n);
+                l = h;
             }
-            else
-            {
-                for(int j = 1; j <= c; j++)
-                {
-                    MPI_Status status;
-                    printf("Rank %d sending to rank %d", rank, j);
-                    MPI_Send(&numreceive, 1, MPI_INT, j, 0, MPI_COMM_WORLD);
-                    myarr = (BensType *)malloc(numreceive*sizeof(BensType));
-                    for(int k = 0; k < numreceive; k++)
-                    {
-                        myarr[k] = array[(c*k-c)*rank]; 
-                    }
-                    MPI_Send(myarr, numreceive, mpiBenType, j, 0, MPI_COMM_WORLD);
-                    MPI_Recv(myarr, numreceive, mpiBenType, 0, 0, MPI_COMM_WORLD, &status);
-                    for(int k = 0; k < numreceive; k++)
-                    {
-                        array[(c*k-c)*rank] = myarr[k];
-                    }
-                }
-            }
+            secSize = secSize * 2;
         }
-        else if(rank <= c)
-        {
-            MPI_Status status;
-            MPI_Recv(&numreceive, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
-            myarr = (BensType *)malloc(numreceive*sizeof(BensType));
-            MPI_Recv(myarr, numreceive, mpiBenType, 0, 0, MPI_COMM_WORLD, &status);
-            merge(myarr, 0, (numreceive-1)/2, (numreceive-1), numreceive);
-            MPI_Send(myarr, numreceive, mpiBenType, 0, 0, MPI_COMM_WORLD);
-        }
-        c = c/2;
     }
 
-    //Print final sorted array
     if(rank == 0)
     {
         printf("Sorted Array:\n");
         printArray(array, n);
     }
+
     MPI_Finalize();
-    return 0;
 }
 
-
-void merge(int *array, int low, int mid, int high, int n)
+// Array A[] has the items to sort; array B[] is a work array.
+void TopDownMergeSort(BensType *A, BensType *B, int n)
 {
-    BensType *b = (BensType *)malloc(n*sizeof(BensType));;
-
-    //copy the current elements into temp array
-    int v;
-    for (v = low; v <= high; v++){
-        b[v] = array[v];
-    }
-    int i = low;
-    int j = mid + 1;
-    int k = low;
-
-    //merge left side and right side into array in sorted order
-    while (i <= mid && j <= high) {
-        if (b[i] <= b[j])
-            array[k++] = b[i++];
-        else
-            array[k++] = b[j++];
-    }
-
-    //The left side might have left-over elements
-    while (i <= mid)
-        array[k++] = b[i++];
-
-
+    CopyArray(A, 0, n, B);           // duplicate array A[] into B[]
+    TopDownSplitMerge(B, 0, n, A);   // sort data from B[] into A[]
 }
 
-void sort(int *array, int low, int high, int n)
+// Sort the given run of array A[] using array B[] as a source.
+// iBegin is inclusive; iEnd is exclusive (A[iEnd] is not in the set).
+void TopDownSplitMerge(BensType *B, int iBegin, int iEnd, BensType *A)
 {
-    int mid;
-    if (low < high) {
-        mid = (high + low)/2;
-        sort(array, low, mid, n);
-        sort(array, mid + 1, high, n);
-        merge(array, low, mid, high, n);
-   }
+    if(iEnd - iBegin < 2)                       // if run size == 1
+        return;                                 //   consider it sorted
+    // split the run longer than 1 item into halves
+    int iMiddle = (iEnd + iBegin) / 2;              // iMiddle = mid point
+    // recursively sort both runs from array A[] into B[]
+    TopDownSplitMerge(A, iBegin,  iMiddle, B);  // sort the left  run
+    TopDownSplitMerge(A, iMiddle,    iEnd, B);  // sort the right run
+    // merge the resulting runs from array B[] into A[]
+    TopDownMerge(B, iBegin, iMiddle, iEnd, A);
+}
 
+//  Left source half is A[ iBegin:iMiddle-1].
+// Right source half is A[iMiddle:iEnd-1   ].
+// Result is            B[ iBegin:iEnd-1   ].
+void TopDownMerge(BensType *A, int iBegin, int iMiddle, int iEnd, BensType *B)
+{
+    int i = iBegin, j = iMiddle;
+ 
+    // While there are elements in the left or right runs...
+    for (int k = iBegin; k < iEnd; k++) {
+        // If left run head exists and is <= existing right run head.
+        if (i < iMiddle && (j >= iEnd || A[i] <= A[j])) {
+            B[k] = A[i];
+            i = i + 1;
+        } else {
+            B[k] = A[j];
+            j = j + 1;
+        }
+    }
+}
+
+void CopyArray(BensType *A, int iBegin, int iEnd, BensType *B)
+{
+    for(int k = iBegin; k < iEnd; k++)
+        B[k] = A[k];
 }
 
 void printArray(BensType *array, int n)
