@@ -14,9 +14,12 @@ void TopDownMerge(BensType *A, int iBegin, int iMiddle, int iEnd, BensType *B);
 void CopyArray(BensType *A, int iBegin, int iEnd, BensType *B);
 void printArray(BensType *array, int n);
 
+int threads = 0;
 int main(int argc, char **argv)
 {
-    int n = 16;
+    int n = 10000000;
+    double startTime;
+    double endTime;
     srand(time(0));
     BensType *array = (BensType *)malloc(n*sizeof(BensType));
     //BensType *work = (BensType *)malloc(n*sizeof(BensType));
@@ -35,7 +38,11 @@ int main(int argc, char **argv)
         {
             array[i] = rand() % (n + 1 - 0) + 0;
         }
-        printArray(array, n);
+        //printArray(array, n);
+    }
+    if(rank == 0)
+    {
+        startTime = MPI_Wtime();
     }
 
     int secSize = n / numranks;
@@ -50,7 +57,8 @@ int main(int argc, char **argv)
     //I now have numranks sorted arrays inside of array that need to be sorted.
     if(rank == 0)
     {
-        int nummerges = secSize-1;
+        int nummerges = numranks - 1;
+        printf("nummerges %d\n", nummerges);
         for(int i = 0; i < nummerges; i++)
         {
             int l = 0;
@@ -61,7 +69,7 @@ int main(int argc, char **argv)
                 work = (BensType *)malloc(n*sizeof(BensType)); 
                 CopyArray(array, l, h, work);
                 TopDownMerge(work, l, m, h, array);
-                printArray(array, n);
+                //printArray(array, n);
                 l = h;
             }
             secSize = secSize * 2;
@@ -71,7 +79,9 @@ int main(int argc, char **argv)
     if(rank == 0)
     {
         printf("Sorted Array:\n");
-        printArray(array, n);
+        //printArray(array, n);
+        endTime = MPI_Wtime();
+        printf("TTC %.12f\n", endTime - startTime);
     }
 
     MPI_Finalize();
@@ -93,8 +103,26 @@ void TopDownSplitMerge(BensType *B, int iBegin, int iEnd, BensType *A)
     // split the run longer than 1 item into halves
     int iMiddle = (iEnd + iBegin) / 2;              // iMiddle = mid point
     // recursively sort both runs from array A[] into B[]
-    TopDownSplitMerge(A, iBegin,  iMiddle, B);  // sort the left  run
-    TopDownSplitMerge(A, iMiddle,    iEnd, B);  // sort the right run
+    if(threads < omp_get_num_threads())
+    {
+        //Should probably have a mutex lock but even if it hits a race condition
+        //the result should be the same anyway because in both cases we are doing
+        //TopDownSplitMerges. Only difference is one is parallel and the other is not
+        threads = threads + 2; 
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            TopDownSplitMerge(A, iBegin,  iMiddle, B);  // sort the left  run
+            #pragma omp section
+            TopDownSplitMerge(A, iMiddle,    iEnd, B);  // sort the right run
+        }
+        threads = threads - 2;
+    }
+    else
+    {
+        TopDownSplitMerge(A, iBegin,  iMiddle, B);
+        TopDownSplitMerge(A, iMiddle,    iEnd, B);
+    }
     // merge the resulting runs from array B[] into A[]
     TopDownMerge(B, iBegin, iMiddle, iEnd, A);
 }

@@ -16,7 +16,9 @@ void printArray(BensType *array, int n);
 
 int main(int argc, char **argv)
 {
-    int n = 32;
+    int n = 10000000;
+    double startTime;
+    double endTime;
     srand(time(0));
     BensType *array = (BensType *)malloc(n*sizeof(BensType));
     //BensType *work = (BensType *)malloc(n*sizeof(BensType));
@@ -35,7 +37,11 @@ int main(int argc, char **argv)
         {
             array[i] = rand() % (n + 1 - 0) + 0;
         }
-        printArray(array, n);
+        //printArray(array, n);
+    }
+    if(rank == 0)
+    {
+        startTime = MPI_Wtime();
     }
 
     int secSize = n / numranks;
@@ -48,9 +54,10 @@ int main(int argc, char **argv)
     MPI_Gather(scatterMat, secSize, MPI_BEN_TYPE, array, secSize, MPI_BEN_TYPE, 0, MPI_COMM_WORLD);
 
     //I now have numranks sorted arrays inside of array that need to be sorted.
-    //if(rank == 0)
-    //{
-        int nummerges = secSize-1;
+    if(rank == 0)
+    {
+        int nummerges = numranks - 1;
+        printf("nummerges %d\n", nummerges);
         for(int i = 0; i < nummerges; i++)
         {
             int l = 0;
@@ -66,12 +73,14 @@ int main(int argc, char **argv)
             }
             secSize = secSize * 2;
         }
-    //}
+    }
 
     if(rank == 0)
     {
         printf("Sorted Array:\n");
-        printArray(array, n);
+        //printArray(array, n);
+        endTime = MPI_Wtime();
+        printf("TTC %.12f\n", endTime - startTime);
     }
 
     MPI_Finalize();

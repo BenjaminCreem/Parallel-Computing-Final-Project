@@ -12,9 +12,11 @@ void TopDownMerge(BensType *A, int iBegin, int iMiddle, int iEnd, BensType *B);
 void CopyArray(BensType *A, int iBegin, int iEnd, BensType *B);
 void printArray(BensType *array, int n);
 
+int threads = 0;
 int main(int argc, char **argv)
 {
-    int n = 16;
+    int n = 10000000;
+    omp_set_nested(1);
     srand(time(0));
     BensType *array = (BensType *)malloc(n*sizeof(BensType));
     
@@ -23,46 +25,17 @@ int main(int argc, char **argv)
     {
         array[i] = rand() % (n + 1 - 0) + 0;
     }
-    printArray(array, n);
+    //printArray(array, n);
 
-    int secSize = n / omp_get_num_threads();
-    #pragma omp parallel for shared(array, n)
-    for(int i = 0; i < omp_get_num_threads(); i++)
-    {
-        int mystart = omp_get_thread_num()*secSize;
-        int mymid = mystart + secSize/2;
-        int myend = mymid + secSize/2;
-        BensType *work = (BensType *)malloc(secSize*sizeof(BensType));
-        BensType *real = (BensType *)malloc(secSize*sizeof(BensType));
-        CopyArray(array, mystart, myend, real);
-        TopDownMergeSort(real, work, secSize);
-        //Put back into array
-        for(int j = mystart; j < myend; j++)
-        {
-            array[j] = real[j];
-        }
-    }
+    double startTime = omp_get_wtime();
+    BensType *work = (BensType *)malloc(n*sizeof(BensType));
+    CopyArray(array, 0, n-1, work);
+    TopDownMergeSort(array, work, n);
+    double endTime = omp_get_wtime();
+    printf("TTC: %.12f\n", endTime - startTime);
 
-    //I now have numranks sorted arrays inside of array that need to be sorted.
-    int nummerges = secSize-1;
-    for(int i = 0; i < nummerges; i++)
-    {
-        int l = 0;
-        for(int j = 0; j < (n/secSize)/2; j++)
-        {
-            int m = l + secSize;
-            int h = m + secSize;
-            BensType *work = (BensType *)malloc(n*sizeof(BensType)); 
-            CopyArray(array, l, h, work);
-            TopDownMerge(work, l, m, h, array);
-            //printArray(array, n);
-            l = h;
-        }
-        secSize = secSize * 2;
-    }
-    
     printf("Sorted Array:\n");
-    printArray(array, n);
+    //printArray(array, n);
 }
 
 // Array A[] has the items to sort; array B[] is a work array.
@@ -81,8 +54,25 @@ void TopDownSplitMerge(BensType *B, int iBegin, int iEnd, BensType *A)
     // split the run longer than 1 item into halves
     int iMiddle = (iEnd + iBegin) / 2;              // iMiddle = mid point
     // recursively sort both runs from array A[] into B[]
-    TopDownSplitMerge(A, iBegin,  iMiddle, B);  // sort the left  run
-    TopDownSplitMerge(A, iMiddle,    iEnd, B);  // sort the right run
+    // Dont want to overdo it. Its okay to run some stuff serial. Will make it 
+    // faster in the end 
+    if(threads < omp_get_num_threads()) 
+    {
+        threads = threads + 2;
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            TopDownSplitMerge(A, iBegin,  iMiddle, B);  // sort the left  run
+            #pragma omp section
+            TopDownSplitMerge(A, iMiddle,    iEnd, B);  // sort the right run
+        }
+        threads = threads - 2;
+    }
+    else
+    {
+        TopDownSplitMerge(A, iBegin, iMiddle, B);
+        TopDownSplitMerge(A, iMiddle,   iEnd, B);
+    }
     // merge the resulting runs from array B[] into A[]
     TopDownMerge(B, iBegin, iMiddle, iEnd, A);
 }
@@ -93,9 +83,12 @@ void TopDownSplitMerge(BensType *B, int iBegin, int iEnd, BensType *A)
 void TopDownMerge(BensType *A, int iBegin, int iMiddle, int iEnd, BensType *B)
 {
     int i = iBegin, j = iMiddle;
+    int k;
  
     // While there are elements in the left or right runs...
-    for (int k = iBegin; k < iEnd; k++) {
+    // Tried to parallelize this. Im sure its possible but I wasnt able to get it working
+    // #pragma omp parallel for shared(A, B, k, i, j)
+    for (k = iBegin; k < iEnd; k++) {
         // If left run head exists and is <= existing right run head.
         if (i < iMiddle && (j >= iEnd || A[i] <= A[j])) {
             B[k] = A[i];
